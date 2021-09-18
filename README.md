@@ -10,8 +10,15 @@
     1. `sdk install sbt` with [sdkman](https://sdkman.io/)
 
 
-# Development commands
+# Development sbt commands
 
 Start `sbt` then
 
 1. `run`
+
+
+## Othere useful sbt commands
+
+1. `dependencyTree` to show the dependency tree
+
+1. `dependencyUpdates` to show the available updates
