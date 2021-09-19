@@ -1,11 +1,16 @@
 import java.time.Instant
 
-import doobie._
-import doobie.syntax.all._
-import doobie.postgres.implicits._ // https://github.com/tpolecat/doobie/releases/tag/v0.12.0
-import cats._
-import cats.syntax.all._
+import java.sql.SQLException
+
+import cats.*
+import cats.syntax.all.*
 import cats.effect.IO
+import cats.effect.cps.* // async, await
+import doobie.*
+import doobie.syntax.all.*
+import doobie.postgres.implicits.* // support Instant https://github.com/tpolecat/doobie/releases/tag/v0.12.0
+
+import CpsHelper.given
 
 object VanillaDoobie:
    case class Dog(id: Int, name: String, parentId: Option[Int], lastModified: Instant)
@@ -15,35 +20,56 @@ object VanillaDoobie:
    //@deriveFrom(Dog) case class DogReq(name, parentId)
    case class DogReq(name: String, parentId: Option[Int])
 
-   def program: ConnectionIO[Unit] = for {
-      _ <- sql"""
-         DROP TABLE IF EXISTS Dog
-      """.update.run
+   val program: ConnectionIO[Unit] =
+      async[ConnectionIO] { // TODO without the braces, compilation error occurs: Found: Unit, Required: doobie.free.connection.ConnectionIO[Unit]
+         sql"""
+            DROP TABLE IF EXISTS Dog
+         """.update.run.await
 
-      _ <- sql"""
-         CREATE TABLE Dog(
-            id           SERIAL    NOT NULL,
-            name         TEXT NOT  NULL,
-            parentId     INTEGER   , /* might be unknown */
-            lastModified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY(id)
-         )
-      """.update.run
+         sql"""
+            CREATE TABLE Dog(
+               id           SERIAL    NOT NULL,
+               name         TEXT      NOT NULL,
+               parentId     INTEGER   REFERENCES Dog, /* might be unknown */
+               lastModified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               PRIMARY KEY(id)
+            )
+         """.update.run.await
 
-      dog1 <- insert(DogReq("name1", None))
-      _ = println(s"INSERT: $dog1")
+         // INSERT
+         val dog1 = insert(DogReq("name1", None)).await
+         println(s"INSERT: $dog1")
 
-      dog2 <- insert(DogReq("name2", Some(dog1.id)))
-      _ = println(s"INSERT: $dog2")
+         // use finally
+         try
+            val dog2 = insert(DogReq("name2", Some(dog1.id))).await
+            println(s"INSERT: $dog2")
 
-      dogs <- sql"""
-         SELECT id, name, parentId, lastModified FROM Dog
-      """.query[Dog].to[List]
-      _ = println(s"SELECT: count = ${dogs.size}\n\t${dogs.mkString("\n\t")}")
+         finally
+            println("async: finally block executed")
 
-   } yield ()
+         // use try, catch
+         async[ConnectionIO] {
+            try
+               val dog3 = insert(DogReq("name3", Some(-1))).await // foreign key error
 
-   def insert(req: DogReq): ConnectionIO[Dog] = for {
+            catch
+               case ex: SQLException =>
+                  println(s"async: expected exception caught: $ex")
+                  throw new ExpectedException(ex)
+
+         }.handleError {
+            case ex: ExpectedException => () // TODO the entire ConnectionIO still fails
+         }.await
+
+         // SELECT
+         val dogs = sql"""
+            SELECT id, name, parentId, lastModified FROM Dog
+         """.query[Dog].to[List].await
+         println(s"SELECT: count = ${dogs.size}\n\t${dogs.mkString("\n\t")}")
+      }
+
+   def insert(req: DogReq): ConnectionIO[Dog] = for
       /*
          doobie 1.0.0-RC1: the next block results in
             [E007] Type Mismatch Error:
@@ -61,4 +87,6 @@ object VanillaDoobie:
          INSERT INTO Dog(name, parentId) VALUES(?, ?)
       """).withUniqueGeneratedKeys[(Int, Instant)]("id", "lastModified".toLowerCase)(req) // doobie 1.0.0-RC1: column namess will be quoted, so toLowerCase must be done as the PostgreSQL server does
 
-   } yield Dog(gen._1, req.name, req.parentId, gen._2)
+   yield Dog(gen._1, req.name, req.parentId, gen._2)
+
+   class ExpectedException(cause: Throwable) extends Exception(cause)

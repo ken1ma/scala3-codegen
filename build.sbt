@@ -21,7 +21,8 @@ lazy val root = (project in file("."))
          // pureconfig seem to be not yet published for Scala 3
          //("com.github.pureconfig" %% "pureconfig-magnolia" % "0.16.0").cross(CrossVersion.for3Use2_13),
 
-         "org.typelevel" %% "cats-effect" % "3.2.8",
+         "org.typelevel" %% "cats-effect" % "3.2.9",
+         "org.typelevel" %% "cats-effect-cps" % "0.3.0",
          "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC1",
          //"org.postgresql" % "postgresql" % "42.2.23",
       ),

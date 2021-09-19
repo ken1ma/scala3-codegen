@@ -1,6 +1,6 @@
 import cats.effect.{IO, IOApp}
 import doobie.Transactor
-import doobie.implicits._
+import doobie.implicits.*
 
 object Main extends IOApp.Simple:
    val run =

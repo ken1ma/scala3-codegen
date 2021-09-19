@@ -8,7 +8,7 @@
    https://github.com/pureconfig/pureconfig/blob/v0.16.0/core/src/main/scala-3/pureconfig/generic/derivation/ConfigReaderDerivation.scala#L24
 */
 
-import AppConf._
+import AppConf.*
 case class AppConf(
    db: Db
 )
