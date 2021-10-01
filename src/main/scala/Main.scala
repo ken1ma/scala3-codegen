@@ -11,4 +11,9 @@ object Main extends IOApp.Simple:
          appConf.db.user,
          appConf.db.password,
       )
-      VanillaDoobie.program.transact(xa)
+      //VanillaDoobie.program.transact(xa)
+      for {
+        _ <- IO.println(SqlClassDoobie.dog1)
+        _ <- IO.println(SqlClassDoobie.dog2)
+        _ <- IO.println(SqlClassDoobie.dog3)
+      } yield ()

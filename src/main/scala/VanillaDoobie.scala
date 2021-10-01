@@ -49,6 +49,7 @@ object VanillaDoobie:
             println("async: finally block executed")
 
          // use try, catch
+/*
          async[ConnectionIO] {
             try
                val dog3 = insert(DogReq("name3", Some(-1))).await // foreign key error
@@ -61,6 +62,7 @@ object VanillaDoobie:
          }.handleError {
             case ex: ExpectedException => () // TODO the entire ConnectionIO still fails
          }.await
+*/
 
          // SELECT
          val dogs = sql"""
