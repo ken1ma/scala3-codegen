@@ -41,8 +41,18 @@ lazy val plugin = (project in file("sql-class/plugin"))
       "org.scala-lang" %% "scala3-compiler" % scalaVersion.value,
     ),
   )
+  .dependsOn(`postgresql-parser`)
 
 lazy val annotation = (project in file("sql-class/annotation"))
   .settings(
     name := "sql-class-annotation",
+  )
+
+lazy val `postgresql-parser` = (project in file("postgresql-parser"))
+  .settings(
+    name := "postgresql-parser",
+    libraryDependencies ++= Seq(
+      "org.typelevel" %% "cats-parse" % "0.3.4",
+      "org.scalameta" %% "munit" % "0.7.29" % Test,
+    )
   )
