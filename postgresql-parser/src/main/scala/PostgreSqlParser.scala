@@ -4,16 +4,18 @@ package parser
 import java.lang.Character.{isJavaIdentifierStart, isJavaIdentifierPart}
 
 import cats.data.NonEmptyList
-import cats.syntax.all._
+import cats.syntax.all.*
 import cats.parse.{Parser => P, Parser0 => P0}
 
-import PostgreSqlAst._
+import PostgreSqlAst.*
 
 class PostgreSqlParser:
   /** Helper methods */
   extension (str: String)
     inline def except(those: String): String = str.filter(!those.contains(_))
     inline def isOneOf(those: String*): Boolean = those.contains(str)
+  extension (token: Token)
+    inline def toIdent: Ident = Ident(token.pre, token.body, false, token.suc)
 /*
   extension (whitespaceOrComment: WhitespaceOrComment)
     inline def containsNewLine: Boolean = whitespaceOrComment.body.exists(ch => ch == '\n' || ch == '\r')
@@ -40,6 +42,16 @@ class PostgreSqlParser:
     }
   }
 */
+
+  // `(pa, pb, pc...).tupled` described in cats-parse/README.md results in Parser0
+  // https://github.com/typelevel/cats-parse/issues/235
+  def unnest[A, B, C               ](t:      ((A, B), C)                    ): (A, B, C               ) = (                                                                                                         t._1._1, t._1._2, t._2)
+  def unnest[A, B, C, D            ](t:     (((A, B), C), D)                ): (A, B, C, D            ) = (                                                                                          t._1._1._1, t._1._1._2, t._1._2, t._2)
+  def unnest[A, B, C, D, E         ](t:    ((((A, B), C), D), E)            ): (A, B, C, D, E         ) = (                                                                        t._1._1._1._1, t._1._1._1._2, t._1._1._2, t._1._2, t._2)
+  def unnest[A, B, C, D, E, F      ](t:   (((((A, B), C), D), E), F)        ): (A, B, C, D, E, F      ) = (                                                   t._1._1._1._1._1, t._1._1._1._1._2, t._1._1._1._2, t._1._1._2, t._1._2, t._2)
+  def unnest[A, B, C, D, E, F, G   ](t:  ((((((A, B), C), D), E), F), G)    ): (A, B, C, D, E, F, G   ) = (                           t._1._1._1._1._1._1, t._1._1._1._1._1._2, t._1._1._1._1._2, t._1._1._1._2, t._1._1._2, t._1._2, t._2)
+  def unnest[A, B, C, D, E, F, G, H](t: (((((((A, B), C), D), E), F), G), H)): (A, B, C, D, E, F, G, H) = (t._1._1._1._1._1._1._1, t._1._1._1._1._1._1._2, t._1._1._1._1._1._2, t._1._1._1._1._2, t._1._1._1._2, t._1._1._2, t._1._2, t._2)
+  def unnest[A, B, C, D](t: (A, (B, C), D)): (A, B, C, D) = (t._1, t._2._1, t._2._2, t._3)
 
   val whitespace: P[Whitespace] = P.charsWhile(_.isWhitespace).map(Whitespace(_)).withContext("Whitespace") // Unicode space characters (not just ASCII)
   val whitespaceSingleLine: P[Whitespace] = P.charsWhile(ch => ch.isWhitespace && ch != '\n' && ch != '\r')
@@ -78,11 +90,16 @@ class PostgreSqlParser:
         }
     (blockComments ~ upToLineEnd).map(_ ++ _).backtrack
   }
-  def preBodySuc[A](body: P[A]): P[(List[WhitespaceOrComment], A, List[WhitespaceOrComment])] = (pre.with1 ~ body ~ suc.?).backtrack
-      .map { case ((pre, body), sucOpt) => (pre, body, sucOpt.getOrElse(Nil)) }
+  def preBodySuc[A](body: P[A]): P[(List[WhitespaceOrComment], A, List[WhitespaceOrComment])] =
+      (pre.with1 ~ body ~ suc.?.map(_.getOrElse(Nil))).backtrack
+      .map(unnest)
 
   /** Token */
   def t(text: String): P[Token] = preBodySuc(P.ignoreCase(text).string).map(Token(_, _, _))
+
+  extension [A](p: P[A])
+    def repTokenSep(sep: P[Token]): P[SeqTokenSep[A]] = (p ~ (sep ~ p).rep0).map(SeqTokenSep(_, _))
+    def repTokenSep(sep: String): P[SeqTokenSep[A]] = repTokenSep(t(sep))
 
   // ident
   val unquotedIdent: P[String] = (P.charWhere(isJavaIdentifierStart) ~ P.charsWhile0(isJavaIdentifierPart)).string
@@ -91,7 +108,65 @@ class PostgreSqlParser:
   val ident: P[Ident] = preBodySuc(
     unquotedIdent.map((_, false)) |
     quotedIdent  .map((_, true ))
-  ).map { case (pre, (body, quoted), suc) => Ident(pre, body, quoted, suc) }
+  ).map(unnest).map(Ident(_, _, _, _))
+
+  // Literal
+  val booleanLit: P[BooleanLit]= preBodySuc((P.ignoreCase("TRUE") | P.ignoreCase("FALSE")).string).map(BooleanLit(_, _, _))
+
+  val integerBody: P[String] = P.charIn('0' to '9').rep.string.backtrack
+  val intLit: P[IntLit]= preBodySuc(integerBody.string).map(IntLit(_, _, _))
+
+  val stringLitBody: P0[String] = (P.charWhere(_ != '\'') | P.string("''")).rep0.string
+  val stringLit: P[StringLit] = preBodySuc(P.char('\'') *> stringLitBody <* P.char('\'')).map(StringLit(_, _, _))
+
+  val lit: P[Lit] = booleanLit | intLit | stringLit
+
+  // types
+  val lenArg: P[LenArg] = (t("(") ~ intLit ~ t(")")).map(unnest).map(LenArg.apply)
+  def lenArg(min: Int, max: Int = Int.MaxValue): P[LenArg] = lenArg.filter(len => min <= len.len.value && len.len.value <= max)
+  val sqlType: P[SqlType] = (
+    /*
+      PostgreSQL 12.5: quoted type names are not accepted.
+      `CREATE TABLE Foo(a "smallint")` results in `ERROR:  type "smallint" does not exist`
+    */
+    // https://www.postgresql.org/docs/14/datatype.html
+    // https://github.com/pgjdbc/pgjdbc/blob/master/pgjdbc/src/main/java/org/postgresql/jdbc/TypeInfoCache.java
+    (t("smallint") | t("int2")).map(_.toIdent).map(smallint.apply) |
+    (t("integer")  | t("int4")).map(_.toIdent).map(integer .apply) |
+    (t("bigint")   | t("int8")).map(_.toIdent).map(bigint  .apply) |
+
+    ((t("numeric") | t("decimal")).map(_.toIdent) ~ {
+      val numericScale: P[NumericScale] = (t(",") ~ intLit).map(NumericScale(_, _))
+      val numericArgs: P[NumericArgs] = (t("(") ~ intLit ~ numericScale.? ~ t(")"))
+          .map(unnest).map(NumericArgs(_, _, _, _))
+      numericArgs.?
+    }).map(numeric.apply) |
+
+    t("real").map(_.toIdent).map(real.apply) |
+    (t("double") ~ t("precision"))
+        .map(t => (t._1.toIdent, t._2.toIdent))
+        .map(double_precision.apply) |
+
+    (((t("varchar").map(Seq(_)) | (t("character") ~ t("varying")).backtrack.map(_.toList)).map(_.map(_.toIdent))) ~ lenArg(0).?).map(varchar.apply) |
+    (((t("char") | t("character")).map(_.toIdent)) ~ lenArg.?).map(char.apply) |
+    t("text").map(_.toIdent).map(text.apply) |
+
+    t("bytea").map(_.toIdent).map(bytea.apply) |
+
+    (t("timestamp") ~ lenArg(0, 6).? ~ (t("without") ~ t("time") ~ t("zone")).map(unnest(_).toList).?).backtrack
+        .map(unnest).map((head, precision, tail) => timestamp(head.toIdent +: tail.getOrElse(Nil).map(_.toIdent), precision)) |
+    (t("timestamp") ~ lenArg(0, 6).? ~ (t("with") ~ t("time") ~ t("zone")).map(unnest(_).toList))
+        .map(unnest).map((head, precision, tail) => timestamptz(head.toIdent +: tail.map(_.toIdent), precision)) |
+    t("date").map(_.toIdent).map(date.apply) |
+    (t("time") ~ lenArg(0, 6).? ~ (t("without") ~ t("time") ~ t("zone")).map(unnest(_).toList).?).backtrack
+        .map(unnest).map((head, precision, tail) => time(head.toIdent +: tail.getOrElse(Nil).map(_.toIdent), precision)) |
+    (t("time") ~ lenArg(0, 6).? ~ (t("with") ~ t("time") ~ t("zone")).map(unnest(_).toList))
+        .map(unnest).map((head, precision, tail) => timetz(head.toIdent +: tail.map(_.toIdent), precision)) |
+
+    t("boolean").map(_.toIdent).map(boolean.apply) |
+
+    t("jsonb").map(_.toIdent).map(jsonb.apply)
+  )
 
   // 4.1.3. Operators
   val op: P[Op] = {
@@ -118,35 +193,75 @@ class PostgreSqlParser:
     preBodySuc((multiCharOp | singleCharOp).string).map(Op(_, _, _))
   }
 
-  // Literal
-  val booleanLit: P[BooleanLit]= preBodySuc((P.ignoreCase("TRUE") | P.ignoreCase("FALSE")).string).map(BooleanLit(_, _, _))
-
-  val integerBody: P[String] = (P.charIn("+-").?.with1 ~ P.charIn('0' to '9').rep).string.backtrack
-  val integerLit: P[IntegerLit]= preBodySuc(integerBody.string).map(IntegerLit(_, _, _))
-
-  val stringLitBody: P0[String] = (P.charWhere(_ != '\'') | P.string("''")).rep0.string
-  val stringLit: P[StringLit] = preBodySuc(P.char('\'') *> stringLitBody <* P.char('\'')).map(StringLit(_, _, _))
-
-  val lit: P[Lit] = booleanLit | integerLit | stringLit
-
-  // Expression
-  val expr: P[Expr] = lit | otherBinOp /*|
-      (t("(") ~ expr ~ t(")")).map(Expr.Paren(_, _, _))*/
-
   // 4.1.6. Operator Precedence
-  val unary = expr
-  val exp: P[Expr] = (unary ~ (op.filter(_.body.isOneOf("^"          )) ~ unary).rep0).map(binOpFoldLeft)
-  val mul: P[Expr] = (exp   ~ (op.filter(_.body.isOneOf("+", "-", "%")) ~ exp  ).rep0).map(binOpFoldLeft)
-  val add: P[Expr] = (mul   ~ (op.filter(_.body.isOneOf("+", "-"     )) ~ mul  ).rep0).map(binOpFoldLeft)
-  val otherBinOp: P[Expr] = (add ~ (op ~ add                                   ).rep0).map(binOpFoldLeft)
-  def binOpFoldLeft(left: Expr, opRights: Seq[(Op, Expr)]): Expr =
-      opRights.foldLeft(left)((left, opRight) => BinOp(left, opRight._1, opRight._2))
+  val expr: P[Expr] = P.recursive { expr =>
+    def unaryOpFoldLeft(ops: Seq[Op], expr: Expr): Expr =
+        ops.foldLeft(expr)((expr, op) => UnaryOp(op, expr))
+    def binOpFoldLeft(left: Expr, opRights: Seq[(Op, Expr)]): Expr =
+        opRights.foldLeft(left)((left, opRight) => BinOp(left, opRight._1, opRight._2))
+    def binOpTokenFoldLeft(left: Expr, opRights: Seq[(Token, Expr)]): Expr =
+        opRights.foldLeft(left)((left, opRight) => BinOp(left, Op(opRight._1), opRight._2))
 
-  val nullability = (t("NOT").? ~ t("NULL")).map(Nullability(_, _)).backtrack
-/*
-  def createTable: P[CreateTable] = {
-    val columnDef = name ~ tpe ~ arraySpec.? ~ columnConstraint.rep0
-    val entry = columnDef | tableConstraint
-    (t("CREATE") ~ t("TABLE") ~ ident ~ t("(") ~ entry ~ t(")")
+    val typeCast: P[Expr] =
+      (t("(") ~ expr ~ t(")")).map(unnest).map(ParenExpr(_, _, _)) | // https://github.com/typelevel/cats-parse says to use `tupled` but couldn't find the method in cats
+      lit
+    val arrayAccess: P[Expr] = (typeCast ~ (t("[") ~ expr ~ t("]")).map(unnest).rep0) // TODO slice subscript
+        .map((expr, subscripts) => subscripts.foldLeft(expr)((expr, subscript) => ArrayAccess(expr, subscript._1, subscript._2, subscript._3)))
+    val unary: P[Expr] = (op.filter(_.body.isOneOf("+", "-")).backtrack.rep0.with1 ~ arrayAccess)
+        .map((signs, expr) => signs.foldLeft(expr)((expr, sign) => UnaryOp(sign, expr)))
+    val exp: P[Expr] = (unary ~ (op.filter(_.body.isOneOf("^"          )).backtrack ~ unary).rep0).map(binOpFoldLeft)
+    val mul: P[Expr] = (exp   ~ (op.filter(_.body.isOneOf("*", "/", "%")).backtrack ~ exp  ).rep0).map(binOpFoldLeft)
+    val add: P[Expr] = (mul   ~ (op.filter(_.body.isOneOf("+", "-"     )).backtrack ~ mul  ).rep0).map(binOpFoldLeft)
+    val oth: P[Expr] = (add   ~ (op.filter(!_.body.isOneOf("<", ">", "=", "<=", ">=", "<>", "!=")).backtrack ~ add).rep0).map(binOpFoldLeft)
+    val rss: P[Expr] = (oth ~ ( // range, membership, and string match
+          (t("NOT").? ~ t("BETWEEN") ~ oth ~ t("AND") ~ oth).backtrack
+        ).?).map { case (expr, opt) => opt match
+          case Some(((((not, between), left), and), right)) => BetweenOp(expr, not.map(Op(_)), Op(between), left, Op(and), right)
+          case None => expr
+        }
+        // TODO IN
+        // TODO LIKE, ILIKE, SIMILAR
+    val cmp: P[Expr] = (rss ~ (op.filter(_.body.isOneOf("<", ">", "=", "<=", ">=", "<>", "!=")).backtrack ~ rss).rep0).map(binOpFoldLeft)
+
+    // TODO IS TRUE, IS FALSE, IS NULL, IS DISTINCT FROM
+    // TODO ISNULL and NOTNULL (nonstandard syntax)
+
+    val not: P[Expr] = (t("NOT").rep0.with1 ~ cmp)
+        .map((nots, expr) => nots.foldLeft(expr)((expr, not) => UnaryOp(Op(not), expr)))
+    val and: P[Expr] = (not ~ (t("AND").backtrack ~ not).rep0).map(binOpTokenFoldLeft)
+    val or : P[Expr] = (and ~ (t("OR" ).backtrack ~ and).rep0).map(binOpTokenFoldLeft)
+
+    or
   }
-*/
+
+  val nullability = (t("NOT").?.with1 ~ t("NULL")).map(Nullability(_, _)).backtrack
+  val default = (t("DEFAULT") ~ expr).map(Default(_, _))
+  val references = (t("REFERENCES") ~ ident ~ (t("(") ~ ident ~ t(")")).map(unnest).map(ReferencesColumn(_, _, _)).?)
+      .map(unnest).map(References(_, _, _))
+  val columnConstraint: P[ColumnConstraint] =
+      nullability |
+      default |
+      references
+  def arrayDim: P[ArrayDim] = (t("[") ~ intLit.? ~ t("]"))
+      .map(unnest).map(ArrayDim.apply)
+
+  // TODO validate that there are no more than one constraints of the same type (e.g. NULL NULL)
+  val column: P[Column] = (ident ~ sqlType ~ arrayDim.rep0 ~ columnConstraint.rep0)
+      .map(unnest).map(Column.apply).backtrack
+
+  val primaryKey = (t("PRIMARY") ~ t("KEY") ~ t("(") ~ ident.repTokenSep(",") ~ t(")"))
+      .map(unnest).map(PrimaryKey(_, _, _, _, _))
+  val unique = (t("UNIQUE") ~ t("(") ~ ident.repTokenSep(",") ~ t(")"))
+      .map(unnest).map(Unique(_, _, _, _))
+  val foreignKey = (t("FOREIGN") ~ t("KEY") ~ t("(") ~ ident.repTokenSep(",") ~ t(")") ~
+      t("REFERENCES") ~ ident ~ (t("(") ~ ident.repTokenSep(",") ~ t(")")).map(unnest).map(ReferencesColumns(_, _, _)).?)
+      .map(unnest).map(ForeignKey(_, _, _, _, _, _, _, _))
+  val tableConstraint: P[TableConstraint] =
+      primaryKey |
+      unique |
+      foreignKey
+
+  def createTable: P[CreateTable] = {
+    val entry = column | tableConstraint
+    (t("CREATE") ~ t("TABLE") ~ ident ~ t("(") ~ entry.repTokenSep(",") ~ t(")")).map(unnest).map(CreateTable.apply)
+  }

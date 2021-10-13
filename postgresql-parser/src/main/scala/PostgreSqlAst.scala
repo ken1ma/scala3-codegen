@@ -22,23 +22,23 @@ object PostgreSqlAst:
   case class Token(pre: Seq[WhitespaceOrComment], body: String, suc: Seq[WhitespaceOrComment] = Nil)
 
   /** Seq with token separators */
-  case class SeqSep[+A](elems: Seq[A], seps: Seq[Token] = Nil):
+  case class SeqTokenSep[+A](elems: Seq[A], seps: Seq[Token]):
     require((elems.isEmpty && seps.isEmpty) || (elems.size - 1 == seps.size),
         s"elems.size = ${elems.size} while seps.size = ${seps.size}")
-    override def toString = if elems.nonEmpty then (elems.init.zip(seps) :+ elems.last).mkString else ""
+    override def toString = (elems.init.zip(seps) ++ elems.lastOption).mkString
 
   case class Ident(pre: Seq[WhitespaceOrComment], body: String, quoted: Boolean = false, suc: Seq[WhitespaceOrComment] = Nil):
     def this(body: String) = this(Nil, body)
     def code = if quoted then s""""$body"""" else body
     override def toString = pre.mkString + code + suc.mkString
 
-  case class Commands(commands: SeqSep[Option[Command]], suc: Seq[WhitespaceOrComment] = Nil):
+  case class Commands(commands: SeqTokenSep[Option[Command]], suc: Seq[WhitespaceOrComment] = Nil):
     def nonEmptyCommands: Seq[Command] = commands.elems.flatten
   trait Command
 
-  case class CreateTable(create: Token, table: Token, ident: Ident, open: Token, content: SeqSep[CreateTableEntry], close: Token) extends Command:
-    def columns: Seq[Column] = content.elems.collect { case column: Column => column }
-    def pk: Option[PrimaryKey] = content.elems.collectFirst { case pk: PrimaryKey => pk }
+  case class CreateTable(create: Token, table: Token, ident: Ident, open: Token, entries: SeqTokenSep[CreateTableEntry], close: Token) extends Command:
+    def columns: Seq[Column] = entries.elems.collect { case column: Column => column }
+    def pk: Option[PrimaryKey] = entries.elems.collectFirst { case pk: PrimaryKey => pk }
     def pkColumns: Seq[Column] = pk match
       case Some(pk) => columns.filter(column => pk.columns.elems.exists(_.body == column.ident.body))
       case None => Nil
@@ -47,84 +47,136 @@ object PostgreSqlAst:
       case None => columns
   trait CreateTableEntry
 
-  case class Column(ident: Ident, tpe: SqlType, array: Boolean, constraints: Seq[ColumnConstraint]) extends CreateTableEntry:
+  case class Column(ident: Ident, tpe: SqlType, arrayDims: Seq[ArrayDim] = Nil, constraints: Seq[ColumnConstraint] = Nil) extends CreateTableEntry:
     def nullability: Option[Nullability] = constraints.collectFirst { case nullability: Nullability => nullability }
-    def notNull: Boolean = nullability.exists(_.not.nonEmpty)
+    def notNull: Boolean = nullability.exists(_.notNull)
     def default: Option[Default] = constraints.collectFirst { case default: Default => default }
 
   trait ColumnConstraint
   case class Nullability(not: Option[Token], nul: Token) extends ColumnConstraint:
+    def notNull: Boolean = not.nonEmpty
     override def toString = s"${not.mkString}$nul"
   case class Default(default: Token, expr: Expr) extends ColumnConstraint
-  case class References(references: Token, table: Ident, columns: SeqSep[Ident]) extends ColumnConstraint
+  case class References(references: Token, table: Ident, dstColumn: Option[ReferencesColumn]) extends ColumnConstraint
+  case class ReferencesColumn(open: Token, column: Ident, close: Token)
 
   trait TableConstraint extends CreateTableEntry
-  case class PrimaryKey(primary: Token, key: Token, open: Token, columns: SeqSep[Ident], close: Token) extends TableConstraint
-  case class Unique    (unique : Token,             open: Token, columns: SeqSep[Ident], close: Token) extends TableConstraint
-  case class ForeignKey(foreign: Token, key: Token, open: Token, columns: SeqSep[Ident], close: Token, references: References) extends TableConstraint
+  case class PrimaryKey(primary: Token, key: Token, open: Token, columns: SeqTokenSep[Ident], close: Token) extends TableConstraint
+  case class Unique    (unique : Token,             open: Token, columns: SeqTokenSep[Ident], close: Token) extends TableConstraint
+  case class ForeignKey(foreign: Token, key: Token, open: Token, columns: SeqTokenSep[Ident], close: Token,
+      references: Token, table: Ident, dstColumns: Option[ReferencesColumns]) extends TableConstraint {
+    require(dstColumns.forall(_.columns.elems.size == columns.elems.size))
+  }
+  case class ReferencesColumns(open: Token, columns: SeqTokenSep[Ident], close: Token)
 
-  case class CreateIndex(create: Token, index: Token, ident: Ident, on: Token, table: Ident, open: Token, columns: SeqSep[Ident], close: Token) extends Command
+  case class CreateIndex(create: Token, index: Token, ident: Ident, on: Token, table: Ident, open: Token, columns: SeqTokenSep[Ident], close: Token) extends Command
 
   trait SqlType
-  case class BOOLEAN  (ident: Ident) extends SqlType
-  case class SMALLINT (ident: Ident) extends SqlType
-  case class INTEGER  (ident: Ident) extends SqlType
-  case class BIGINT   (ident: Ident) extends SqlType
-  case class REAL     (ident: Ident) extends SqlType
-  case class DOUBLE_PRECISION(dident: Ident, pident: Ident) extends SqlType
-  case class NUMERIC  (ident: Ident, numericArgs: Option[NumericArgs]) extends SqlType
-  case class NumericArgs(open: Token, precision: IntegerLit, scale: Option[NumericScale], close: Token)
-  case class NumericScale(comma: Token, scale: IntegerLit)
-  case class TEXT     (ident: Ident) extends SqlType
-  case class CHAR     (ident: Ident, len: LenArg) extends SqlType
-  case class LenArg(open: Token, lenArg: IntegerLit, close: Token)
-  case class VARCHAR  (ident: Ident, len: LenArg) extends SqlType
-  case class BYTEA    (ident: Ident) extends SqlType
-  case class DATE     (ident: Ident) extends SqlType
-  case class TIME     (ident: Ident) extends SqlType
-  case class TIMESTAMP(ident: Ident) extends SqlType
-  case class JSONB    (ident: Ident) extends SqlType
+  /** INT2 */ case class smallint (ident: Ident) extends SqlType
+  /** INT4 */ case class integer  (ident: Ident) extends SqlType
+  /** INT8 */ case class bigint   (ident: Ident) extends SqlType
+  case class numeric  (ident: Ident, numericArgs: Option[NumericArgs] = None) extends SqlType
+  case class NumericArgs(open: Token, precision: IntLit, scale: Option[NumericScale] = None, close: Token)
+  case class NumericScale(comma: Token, scale: IntLit)
+  case class real     (ident: Ident) extends SqlType
+  case class double_precision(ident1: Ident, ident2: Ident) extends SqlType
+  // SMALLSERIAL
+  // SERIAL
+  // BIGSERIAL
+  // MONEY
+  case class varchar  (idents: Seq[Ident], len: Option[LenArg] = None) extends SqlType
+  case class LenArg(open: Token, len: IntLit, close: Token)
+  case class char     (ident: Ident, len: Option[LenArg]) extends SqlType
+  case class text     (ident: Ident) extends SqlType
+  case class bytea    (ident: Ident) extends SqlType
+  /** timestamp [without time zone] */ case class timestamp(idents: Seq[Ident], precision: Option[LenArg] = None) extends SqlType:
+    override def toString = s"${idents.head}$precision${idents.tail}"
+  /** timestamp  with    time zone  */ case class timestamptz(idents: Seq[Ident], precision: Option[LenArg] = None) extends SqlType:
+    override def toString = s"${idents.head}$precision${idents.tail}"
+  case class date     (ident: Ident) extends SqlType
+  /** time [without time zone] */ case class time(idents: Seq[Ident], precision: Option[LenArg] = None) extends SqlType
+  /** time  with    time zone  */ case class timetz(idents: Seq[Ident], precision: Option[LenArg] = None) extends SqlType
+  // INTERVAL
+  case class boolean  (ident: Ident) extends SqlType
+  // ENUM / Composite Types / Domain Types
+  // POINT, LINE, LSEG, BOX, PATH, POLYGON, CIRCLE
+  // CIDR, INET, MACADDR, MACADDR8
+  // BIT, VBIT
+  // TSVECTOR, TSQUERY
+  // UUID
+  // XML
+  // JSON
+  case class jsonb    (ident: Ident) extends SqlType
+  /** Array dimension */ case class ArrayDim(open: Token, size: Option[IntLit], close: Token)
+  // INT4RANGE, INT8RANGE, NUMRANGE, TSRANGE, TSTZRANGE, DATERANGE
+  // OID
+  // PG_LSN
+  // Pseudo-Types
 
   trait Expr
+  case class ParenExpr(open: Token, expr: Expr, close: Token) extends Expr
+
   /** Literal */ trait Lit extends Expr
   case class FunctionCall(ident: Ident, args: Option[CallArgs] = None) extends Lit:
     def isCurrentTimestamp = ident.body.equalsIgnoreCase("CURRENT_TIMESTAMP")
-  case class CallArgs(open: Token, args: SeqSep[Expr], close: Token)
+  case class CallArgs(open: Token, args: SeqTokenSep[Expr], close: Token)
 
   case class BooleanLit(pre: Seq[WhitespaceOrComment], body: String, suc: Seq[WhitespaceOrComment] = Nil) extends Lit:
     require(body.equalsIgnoreCase("FALSE") | body.equalsIgnoreCase("TRUE"), s"illegal body: $body")
     def booleanValue = body.equalsIgnoreCase("TRUE")
-  case class IntegerLit(pre: Seq[WhitespaceOrComment], body: String, suc: Seq[WhitespaceOrComment] = Nil) extends Lit
+  case class IntLit(pre: Seq[WhitespaceOrComment], body: String, suc: Seq[WhitespaceOrComment] = Nil) extends Lit:
+    val value = body.toInt
   case class StringLit(pre: Seq[WhitespaceOrComment], body: String, suc: Seq[WhitespaceOrComment] = Nil) extends Lit:
     override def toString = s"'$body'"
 
   case class ArrayLit(pre: Token, open: Token, close: Token, suc: Token) extends Lit
-  /** Array dimension */ case class ArrayDim(open: Token, size: Option[IntegerLit], close: Token)
 
+  case class ArrayAccess(expr: Expr, open: Token, subscript: Expr, close: Token) extends Expr
   case class Op(pre: Seq[WhitespaceOrComment], body: String, suc: Seq[WhitespaceOrComment] = Nil)
+  case class UnaryOp(op: Op, expr: Expr) extends Expr
   case class BinOp(left: Expr, op: Op, right: Expr) extends Expr
+  case class BetweenOp(expr: Expr, not: Option[Op], between: Op, left: Expr, and: Op, right: Expr) extends Expr
+    //def lower = if left <= right then left else right
+    //def upper = if left <= right then right else left
 
   // helper constructors
   object Token:
-    def apply(body: String): Token = Token(Nil, body)
-    def apply(body: String, suc: Seq[WhitespaceOrComment]): Token = Token(Nil, body, suc)
+    def apply(body: String, suc: Seq[WhitespaceOrComment]): Token = this(Nil, body, suc)
+    def apply(body: String): Token = this(Nil, body)
+
+  object SeqTokenSep:
+    def apply[A](head: A, tail: Seq[(Token, A)] = Nil): SeqTokenSep[A] = SeqTokenSep(head +: tail.map(_._2), tail.map(_._1))
+    def apply[A](head: Option[A], tail: Seq[(Token, A)]): SeqTokenSep[A] = SeqTokenSep(head.toSeq ++ tail.map(_._2), tail.map(_._1))
+
   object Ident:
-    def apply(body: String): Ident = Ident(Nil, body)
-    def apply(body: String, quoted: Boolean): Ident = Ident(Nil, body, quoted)
-    def apply(body: String, suc: Seq[WhitespaceOrComment]): Ident = Ident(Nil, body, suc = suc)
-    def apply(body: String, quoted: Boolean, suc: Seq[WhitespaceOrComment]): Ident = Ident(Nil, body, quoted, suc)
+    def apply(body: String, suc: Seq[WhitespaceOrComment]): Ident = this(Nil, body, suc = suc)
+    def apply(body: String): Ident = this(Nil, body)
+    def apply(body: String, quoted: Boolean, suc: Seq[WhitespaceOrComment]): Ident = this(Nil, body, quoted, suc)
+    def apply(body: String, quoted: Boolean): Ident = this(Nil, body, quoted)
 
   object BooleanLit:
-    def apply(body: String): BooleanLit = BooleanLit(Nil, body)
-    def apply(value: Boolean): BooleanLit = this(if value then "TRUE" else "FALSE")
-  object IntegerLit:
-    def apply(body: String): IntegerLit = IntegerLit(Nil, body)
-    def apply(value: Int): IntegerLit = this(value.toString)
+    def apply(body: String, suc: Seq[WhitespaceOrComment]): BooleanLit = this(Nil, body, suc)
+    def apply(body: String): BooleanLit = this(Nil, body)
+    def apply(pre: Seq[WhitespaceOrComment], value: Boolean, suc: Seq[WhitespaceOrComment]): BooleanLit = this(pre, if value then "TRUE" else "FALSE", suc)
+    def apply(pre: Seq[WhitespaceOrComment], value: Boolean): BooleanLit = this(pre, value, Nil)
+    def apply(value: Boolean): BooleanLit = this(Nil, value)
+
+  object IntLit:
+    def apply(body: String, suc: Seq[WhitespaceOrComment]): IntLit = this(Nil, body, suc)
+    def apply(body: String): IntLit = this(Nil, body)
+    def apply(pre: Seq[WhitespaceOrComment], value: Int, suc: Seq[WhitespaceOrComment]): IntLit = this(pre, value.toString, suc)
+    def apply(pre: Seq[WhitespaceOrComment], value: Int): IntLit = this(pre, value, Nil)
+    def apply(value: Int): IntLit = this(Nil, value)
+
   object StringLit:
-    def apply(body: String): StringLit = StringLit(Nil, body)
+    def apply(body: String): StringLit = this(Nil, body)
 
   object Op:
-    def apply(body: String): Op = Op(Nil, body)
+    def apply(body: String): Op = this(Nil, body)
+    def apply(token: Token): Op = this(token.pre, token.body, token.suc)
+
+  object BetweenOp:
+    def apply(expr: Expr, between: Op, left: Expr, and: Op, right: Expr): BetweenOp = this(expr, None, between, left, and, right)
 
   object Nullability:
     def apply(value: Boolean): Nullability =
@@ -135,13 +187,6 @@ object PostgreSqlAst:
 
 object PostgreSqlAstOps:
   import PostgreSqlAst._
-
-  object SeqSep:
-    def apply[A](head: A, tail: Seq[(Token, A)]): SeqSep[A] = new SeqSep(head +: tail.map(_._2), tail.map(_._1))
-    def apply[A](head: Option[A], tail: Seq[(Token, A)]): SeqSep[A] = new SeqSep(head.toSeq ++ tail.map(_._2), tail.map(_._1))
-
-  // Ident
-    //def append(frag: String) = copy(body = body + frag)
 
   implicit class SeqColumnOps(columns: Seq[Column]):
     def findOrThrow(identBody: String) = columns.find(_.ident.body == identBody).getOrElse(throw new Exception(s"column not found: $identBody"))
