@@ -1,14 +1,12 @@
 package jp.ken1ma.postgresql
 package parser
 
-import scala.language.implicitConversions
-
 import cats.data.NonEmptyList
 import cats.syntax.all.*
 import cats.parse.{Parser => P, Parser0 => P0}
 
 import PostgreSqlAst.*
-import PostgreSqlAstHelper.{*, given}
+import PostgreSqlAstHelper.*
 
 class PostgreSqlParserSuite extends munit.FunSuite:
   val parser = PostgreSqlParser()
@@ -111,7 +109,7 @@ class PostgreSqlParserSuite extends munit.FunSuite:
 
   test("stringLit") {
     assertEquals(stringLit.parseAll("''"), Right(StringLit("")))
-    assertEquals(stringLit.parseAll(" '文字列' "), Right(StringLit(ws" ", "文字列", ws" ")))
+    assertEquals(stringLit.parseAll(" '文字列' "), Right(StringLit(Seq(ws" "), "文字列", Seq(ws" "))))
   }
 
   test("op") {
@@ -185,12 +183,7 @@ class PostgreSqlParserSuite extends munit.FunSuite:
       CreateTable(token"CREATE", token" TABLE", ident" Foo", token"(\n", SeqTokenSep(Seq(
         Column(ident"  id", integer(ident" integer")),
         Column(Ident(ws"  ", "score", true), numeric(ident" numeric", Some(NumericArgs(token"(", intLit"3", Some(NumericScale(token",", intLit" 2")), token")")))),
-        PrimaryKey(token"  PRIMARY", token" KEY", token"(", SeqTokenSep(
-          ident"id"
-        ), token")\n"),
-      ), Seq(
-        token",\n",
-        token",\n",
-      )), token")")
+        PrimaryKey(token"  PRIMARY", token" KEY", token"(", SeqTokenSep(ident"id"), token")\n"),
+      ), token",\n"), token")")
     ))
   }

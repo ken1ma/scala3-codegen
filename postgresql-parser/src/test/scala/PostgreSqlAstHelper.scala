@@ -55,6 +55,3 @@ object PostgreSqlAstHelper:
         body,
         if suc.nonEmpty then Seq(Whitespace(suc)) else Nil,
       )
-
-  given whitespace2Seq: Conversion[Whitespace, Seq[Whitespace]] =
-    Seq(_)

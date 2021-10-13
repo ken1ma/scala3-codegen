@@ -143,16 +143,20 @@ object PostgreSqlAst:
   object Token:
     def apply(body: String, suc: Seq[WhitespaceOrComment]): Token = this(Nil, body, suc)
     def apply(body: String): Token = this(Nil, body)
+    def apply(pre: Whitespace, body: String): Token = this(Seq(pre), body)
 
   object SeqTokenSep:
     def apply[A](head: A, tail: Seq[(Token, A)] = Nil): SeqTokenSep[A] = SeqTokenSep(head +: tail.map(_._2), tail.map(_._1))
     def apply[A](head: Option[A], tail: Seq[(Token, A)]): SeqTokenSep[A] = SeqTokenSep(head.toSeq ++ tail.map(_._2), tail.map(_._1))
+    def apply[A](elems: Seq[A], sep: Token): SeqTokenSep[A] = SeqTokenSep(elems, Seq.fill(elems.size - 1)(sep))
 
   object Ident:
     def apply(body: String, suc: Seq[WhitespaceOrComment]): Ident = this(Nil, body, suc = suc)
     def apply(body: String): Ident = this(Nil, body)
     def apply(body: String, quoted: Boolean, suc: Seq[WhitespaceOrComment]): Ident = this(Nil, body, quoted, suc)
     def apply(body: String, quoted: Boolean): Ident = this(Nil, body, quoted)
+    def apply(pre: Whitespace, body: String, quoted: Boolean): Ident = this(Seq(pre), body, quoted)
+    def apply(pre: Whitespace, body: String): Ident = this(Seq(pre), body)
 
   object BooleanLit:
     def apply(body: String, suc: Seq[WhitespaceOrComment]): BooleanLit = this(Nil, body, suc)
@@ -170,6 +174,7 @@ object PostgreSqlAst:
 
   object StringLit:
     def apply(body: String): StringLit = this(Nil, body)
+    def apply(pre: Whitespace, body: String): StringLit = this(Seq(pre), body)
 
   object Op:
     def apply(body: String): Op = this(Nil, body)
