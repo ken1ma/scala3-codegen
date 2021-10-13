@@ -1,24 +1,18 @@
 package jp.ken1ma.postgresql
 package parser
 
+import scala.language.implicitConversions
+
 import cats.data.NonEmptyList
 import cats.syntax.all.*
 import cats.parse.{Parser => P, Parser0 => P0}
 
 import PostgreSqlAst.*
+import PostgreSqlAstHelper.{*, given}
 
 class PostgreSqlParserSuite extends munit.FunSuite:
   val parser = PostgreSqlParser()
   import parser._
-
-  val space1 = Whitespace(" ")
-  val space1s = Seq(space1)
-
-  val newLine1 = Whitespace("\n")
-  val newLine1s = Seq(newLine1)
-
-  val space2 = Whitespace("  ")
-  val space2s = Seq(space2)
 
   // Use this when the diff context is too short
   def assertEqualsLong[A](obtained: A, expected: A) = {
@@ -28,12 +22,12 @@ class PostgreSqlParserSuite extends munit.FunSuite:
   }
 
   test("whitespace") {
-    assertEquals(whitespace.parseAll(" "), Right(space1))
-    assertEquals(whitespace.parseAll("\t\n \r\n \r "), Right(Whitespace("\t\n \r\n \r ")))
+    assertEquals(whitespace.parseAll(" "), Right(ws" "))
+    assertEquals(whitespace.parseAll("\t\n \r\n \r "), Right(ws"\t\n \r\n \r "))
   }
 
   test("whitespaceSingleLine") {
-    assertEquals(whitespaceSingleLine.parse(" \n"), Right(("\n", space1)))
+    assertEquals(whitespaceSingleLine.parse(" \n"), Right(("\n", ws" ")))
   }
 
   test("lineEnd") {
@@ -74,34 +68,34 @@ class PostgreSqlParserSuite extends munit.FunSuite:
   }
 
   test("token.single") {
-    assertEquals(t("SELECT").parseAll("SELECT"), Right(Token("SELECT")))
-    assertEquals(t("SELECT").parseAll("select"), Right(Token("select")))
-    assertEquals(t("SELECT").parseAll(" Select"), Right(Token(space1s, "Select")))
-    assertEquals(t("SELECT").parseAll("sElEcT "), Right(Token("sElEcT", space1s)))
-    assertEquals(t("SELECT").parseAll(" SelecT "), Right(Token(space1s, "SelecT", space1s)))
+    assertEquals(t("SELECT").parseAll("SELECT"), Right(token"SELECT"))
+    assertEquals(t("SELECT").parseAll("select"), Right(token"select"))
+    assertEquals(t("SELECT").parseAll(" Select"), Right(token" Select"))
+    assertEquals(t("SELECT").parseAll("sElEcT "), Right(token"sElEcT "))
+    assertEquals(t("SELECT").parseAll(" SelecT "), Right(token" SelecT "))
   }
 
   test("token.multiple") {
     assertEquals((t("SELECT") ~ t("INTO")).parseAll("SELECT INTO"),
-        Right((Token("SELECT"), Token(space1s, "INTO"))))
+        Right((token"SELECT", token" INTO")))
     assertEquals((t("SELECT") ~ t("INTO")).parseAll(" SELECT INTO "),
-        Right((Token(space1s, "SELECT"), Token(space1s, "INTO", space1s))))
+        Right((token" SELECT", token" INTO ")))
     assertEquals((t("SELECT") ~ t("INTO")).parseAll("/*a*/SELECT/*b*/INTO/*c*/"),
         Right((Token(Seq(BlockComment("a")), "SELECT"), Token(Seq(BlockComment("b")), "INTO", Seq(BlockComment("c"))))))
     assertEquals((t("SELECT") ~ t("INTO")).parseAll("/*a*/ select /*b*/into--c"),
-        Right((Token(Seq(BlockComment("a"), space1), "select"), Token(Seq(space1, BlockComment("b")), "into", Seq(LineComment("c", None))))))
+        Right((Token(Seq(BlockComment("a"), ws" "), "select"), Token(Seq(ws" ", BlockComment("b")), "into", Seq(LineComment("c", None))))))
     assertEquals((t("SELECT") ~ t("INTO")).parseAll(" /*a*/ SELECT /*b*/ INTO /*c*/ "),
-        Right((Token(Seq(space1, BlockComment("a"), space1), "SELECT"), Token(Seq(space1, BlockComment("b"), space1), "INTO", Seq(space1, BlockComment("c"), space1)))))
+        Right((Token(Seq(ws" ", BlockComment("a"), ws" "), "SELECT"), Token(Seq(ws" ", BlockComment("b"), ws" "), "INTO", Seq(ws" ", BlockComment("c"), ws" ")))))
   }
 
   test("ident") {
-    assertEquals(ident.parseAll("t0"), Right(Ident("t0")))
+    assertEquals(ident.parseAll("t0"), Right(ident"t0"))
     assertEquals(ident.parseAll("\"t0\""), Right(Ident(Nil, "t0", true)))
-    assertEquals(ident.parseAll(" t1 \n"), Right(Ident(space1s, "t1", false, Seq(Whitespace(" \n")))))
+    assertEquals(ident.parseAll(" t1 \n"), Right(ident" t1 \n"))
     assertEquals(ident.parseAll(" /*c0*/  /* c1 */ t2 /*c2*/  --c3"), Right(Ident(
-      Seq(space1, BlockComment("c0"), Whitespace("  "), BlockComment(" c1 "), space1),
+      Seq(ws" ", BlockComment("c0"), ws"  ", BlockComment(" c1 "), ws" "),
       "t2", false,
-      Seq(space1, BlockComment("c2"), Whitespace("  "), LineComment("c3", None)),
+      Seq(ws" ", BlockComment("c2"), ws"  ", LineComment("c3", None)),
     )))
   }
 
@@ -111,60 +105,60 @@ class PostgreSqlParserSuite extends munit.FunSuite:
   }
 
   test("intLit") {
-    assertEquals(intLit.parseAll("0"), Right(IntLit(0)))
-    assertEquals(intLit.parseAll("1234567890"), Right(IntLit(1234567890)))
+    assertEquals(intLit.parseAll("0"), Right(intLit"0"))
+    assertEquals(intLit.parseAll("1234567890"), Right(intLit"1234567890"))
   }
 
   test("stringLit") {
     assertEquals(stringLit.parseAll("''"), Right(StringLit("")))
-    assertEquals(stringLit.parseAll(" '文字列' "), Right(StringLit(space1s, "文字列", space1s)))
+    assertEquals(stringLit.parseAll(" '文字列' "), Right(StringLit(ws" ", "文字列", ws" ")))
   }
 
   test("op") {
-    assertEquals(op.parseAll("+"), Right(Op("+")))
-    assertEquals(op.parseAll("-"), Right(Op("-")))
-    assertEquals(op.parseAll("*"), Right(Op("*")))
-    assertEquals(op.parseAll("/"), Right(Op("/")))
+    assertEquals(op.parseAll("+"), Right(op"+"))
+    assertEquals(op.parseAll("-"), Right(op"-"))
+    assertEquals(op.parseAll("*"), Right(op"*"))
+    assertEquals(op.parseAll("/"), Right(op"/"))
 
-    assertEquals(op.parseAll("<" ), Right(Op("<" )))
-    assertEquals(op.parseAll("<="), Right(Op("<=")))
-    assertEquals(op.parseAll(">" ), Right(Op(">" )))
-    assertEquals(op.parseAll(">="), Right(Op(">=")))
-    assertEquals(op.parseAll("=" ), Right(Op("=" )))
+    assertEquals(op.parseAll("<" ), Right(op"<" ))
+    assertEquals(op.parseAll("<="), Right(op"<="))
+    assertEquals(op.parseAll(">" ), Right(op">" ))
+    assertEquals(op.parseAll(">="), Right(op">="))
+    assertEquals(op.parseAll("=" ), Right(op"=" ))
 
-    assertEquals(op.parseAll("~"), Right(Op("~")))
-    assertEquals(op.parseAll("!"), Right(Op("!")))
-    assertEquals(op.parseAll("@"), Right(Op("@")))
-    assertEquals(op.parseAll("#"), Right(Op("#")))
-    assertEquals(op.parseAll("%"), Right(Op("%")))
-    assertEquals(op.parseAll("^"), Right(Op("^")))
-    assertEquals(op.parseAll("&"), Right(Op("&")))
-    assertEquals(op.parseAll("|"), Right(Op("|")))
-    assertEquals(op.parseAll("`"), Right(Op("`")))
-    assertEquals(op.parseAll("?"), Right(Op("?")))
+    assertEquals(op.parseAll("~"), Right(op"~"))
+    assertEquals(op.parseAll("!"), Right(op"!"))
+    assertEquals(op.parseAll("@"), Right(op"@"))
+    assertEquals(op.parseAll("#"), Right(op"#"))
+    assertEquals(op.parseAll("%"), Right(op"%"))
+    assertEquals(op.parseAll("^"), Right(op"^"))
+    assertEquals(op.parseAll("&"), Right(op"&"))
+    assertEquals(op.parseAll("|"), Right(op"|"))
+    assertEquals(op.parseAll("`"), Right(op"`"))
+    assertEquals(op.parseAll("?"), Right(op"?"))
 
     // 4.1.3 @- is an allowed operator name, but *- is not
-    assertEquals(op.parseAll("@-"), Right(Op("@-")))
+    assertEquals(op.parseAll("@-"), Right(op"@-"))
     assert(op.parse("*-").isLeft)
   }
 
   test("varchar") {
-    assertEquals(sqlType.parseAll("varchar"), Right(varchar(Seq(Ident("varchar")))))
-    assertEquals(sqlType.parseAll("character VARYING(3)" ), Right(varchar(Seq(Ident("character"), Ident(space1s, "VARYING")), Some(LenArg(Token("("), IntLit(3), Token(")"))))))
+    assertEquals(sqlType.parseAll("varchar"), Right(varchar(Seq(ident"varchar"))))
+    assertEquals(sqlType.parseAll("character VARYING(3)" ), Right(varchar(Seq(ident"character", ident" VARYING"), Some(LenArg(token"(", intLit"3", token")")))))
   }
 
   test("expr") {
-    assertEquals(expr.parseAll("2+3"),   Right(BinOp(IntLit(2), Op("+"), IntLit(3))))
-    assertEquals(expr.parseAll(" 2 - 3 + 5 "), Right(BinOp(BinOp(IntLit(space1s, 2), Op(space1s, "-"), IntLit(space1s, 3)), Op(space1s, "+"), IntLit(space1s, 5, space1s))))
-    assertEquals(expr.parseAll("2*3/5"), Right(BinOp(BinOp(IntLit(2), Op("*"), IntLit(3)), Op("/"), IntLit(5))))
-    assertEquals(expr.parseAll("2+3%5"), Right(BinOp(IntLit(2), Op("+"), BinOp(IntLit(3), Op("%"), IntLit(5)))))
+    assertEquals(expr.parseAll("2+3"),   Right(BinOp(intLit"2", op"+", intLit"3")))
+    assertEquals(expr.parseAll(" 2 - 3 + 5 "), Right(BinOp(BinOp(intLit" 2", op" -", intLit" 3"), op" +", intLit" 5 ")))
+    assertEquals(expr.parseAll("2*3/5"), Right(BinOp(BinOp(intLit"2", op"*", intLit"3"), op"/", intLit"5")))
+    assertEquals(expr.parseAll("2+3%5"), Right(BinOp(intLit"2", op"+", BinOp(intLit"3", op"%", intLit"5"))))
 
-    assertEquals(expr.parseAll("2 BETWEEN 3 AND 5"), Right(BetweenOp(IntLit(2), Op(space1s, "BETWEEN"), IntLit(space1s, 3), Op(space1s, "AND"), IntLit(space1s, 5))))
-    assertEquals(expr.parseAll("2 NoT bETWEEn 3 anD 5"), Right(BetweenOp(IntLit(2), Some(Op(space1s, "NoT")), Op(space1s, "bETWEEn"), IntLit(space1s, 3), Op(space1s, "anD"), IntLit(space1s, 5))))
+    assertEquals(expr.parseAll("2 BETWEEN 3 AND 5"), Right(BetweenOp(intLit"2", op" BETWEEN", intLit" 3", op" AND", intLit" 5")))
+    assertEquals(expr.parseAll("2 NoT bETWEEn 3 anD 5"), Right(BetweenOp(intLit"2", Some(op" NoT"), op" bETWEEn", intLit" 3", op" anD", intLit" 5")))
 
-    assertEquals(expr.parseAll("2+3=5"), Right(BinOp(BinOp(IntLit(2), Op("+"), IntLit(3)), Op("="), IntLit(5))))
-    assertEquals(expr.parseAll("2<=3*5"), Right(BinOp(IntLit(2), Op("<="), BinOp(IntLit(3), Op("*"), IntLit(5)))))
-    assertEquals(expr.parseAll("2<3 AND 5 OR NOT 7"), Right(BinOp(BinOp(BinOp(IntLit(2), Op("<"), IntLit(3)), Op(space1s, "AND"), IntLit(space1s, 5)), Op(space1s, "OR"), UnaryOp(Op(space1s, "NOT"), IntLit(space1s, 7)))))
+    assertEquals(expr.parseAll("2+3=5"), Right(BinOp(BinOp(intLit"2", op"+", intLit"3"), op"=", intLit"5")))
+    assertEquals(expr.parseAll("2<=3*5"), Right(BinOp(intLit"2", op"<=", BinOp(intLit"3", op"*", intLit"5"))))
+    assertEquals(expr.parseAll("2<3 AND 5 OR NOT 7"), Right(BinOp(BinOp(BinOp(intLit"2", op"<", intLit"3"), op" AND", intLit" 5"), op" OR", UnaryOp(op" NOT", intLit" 7"))))
   }
 
   test("nullability") {
@@ -176,9 +170,9 @@ class PostgreSqlParserSuite extends munit.FunSuite:
     assertEquals(createTable.parseAll("""
         CREATE TABLE Foo(a integer)
       """.trim), Right(
-      CreateTable(Token("CREATE"), Token(space1s, "TABLE"), Ident(space1s, "Foo"), Token("("), SeqTokenSep(
-        Column(Ident("a"), integer(Ident(space1s, "integer"))),
-      ), Token(")"))
+      CreateTable(token"CREATE", token" TABLE", ident" Foo", token"(", SeqTokenSep(
+        Column(ident"a", integer(ident" integer")),
+      ), token")")
     ))
 
     assertEquals(createTable.parseAll("""
@@ -188,16 +182,15 @@ class PostgreSqlParserSuite extends munit.FunSuite:
         |  PRIMARY KEY(id)
         |)
         """.stripMargin.trim), Right(
-      CreateTable(Token("CREATE"), Token(space1s, "TABLE"), Ident(space1s, "Foo"), Token("(", newLine1s), SeqTokenSep(Seq(
-        Column(Ident(space2s, "id"), integer(Ident(space1s, "integer"))),
-        Column(Ident(space2s, "score", true), numeric(Ident(space1s, "numeric"), Some(NumericArgs(Token("("), IntLit(3), Some(NumericScale(Token(","), IntLit(space1s, 2))), Token(")"))))),
-        PrimaryKey(Token(space2s, "PRIMARY"), Token(space1s, "KEY"), Token("("), SeqTokenSep(
-          Ident("id")
-        ), Token(")", newLine1s)),
+      CreateTable(token"CREATE", token" TABLE", ident" Foo", token"(\n", SeqTokenSep(Seq(
+        Column(ident"  id", integer(ident" integer")),
+        Column(Ident(ws"  ", "score", true), numeric(ident" numeric", Some(NumericArgs(token"(", intLit"3", Some(NumericScale(token",", intLit" 2")), token")")))),
+        PrimaryKey(token"  PRIMARY", token" KEY", token"(", SeqTokenSep(
+          ident"id"
+        ), token")\n"),
       ), Seq(
-        Token(",", newLine1s),
-        Token(",", newLine1s),
-      )), Token(")"))
+        token",\n",
+        token",\n",
+      )), token")")
     ))
   }
-
