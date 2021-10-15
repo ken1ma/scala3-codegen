@@ -51,6 +51,8 @@ class PostgreSqlParser:
   def unnest[A, B, C, D, E, F      ](t:   (((((A, B), C), D), E), F)        ): (A, B, C, D, E, F      ) = (                                                   t._1._1._1._1._1, t._1._1._1._1._2, t._1._1._1._2, t._1._1._2, t._1._2, t._2)
   def unnest[A, B, C, D, E, F, G   ](t:  ((((((A, B), C), D), E), F), G)    ): (A, B, C, D, E, F, G   ) = (                           t._1._1._1._1._1._1, t._1._1._1._1._1._2, t._1._1._1._1._2, t._1._1._1._2, t._1._1._2, t._1._2, t._2)
   def unnest[A, B, C, D, E, F, G, H](t: (((((((A, B), C), D), E), F), G), H)): (A, B, C, D, E, F, G, H) = (t._1._1._1._1._1._1._1, t._1._1._1._1._1._1._2, t._1._1._1._1._1._2, t._1._1._1._1._2, t._1._1._1._2, t._1._1._2, t._1._2, t._2)
+
+  //def unnest[A, B, C](t: (A, (B, C))): (A, B, C) = (t._1, t._2._1, t._2._2) // compiler error: Double definition with ((A, B), C)) (have the same type after erasure)
   def unnest[A, B, C, D](t: (A, (B, C), D)): (A, B, C, D) = (t._1, t._2._1, t._2._2, t._3)
 
   val whitespace: P[Whitespace] = P.charsWhile(_.isWhitespace).map(Whitespace(_)).withContext("Whitespace") // Unicode space characters (not just ASCII)
@@ -124,7 +126,7 @@ class PostgreSqlParser:
   // types
   val lenArg: P[LenArg] = (t("(") ~ intLit ~ t(")")).map(unnest).map(LenArg.apply)
   def lenArg(min: Int, max: Int = Int.MaxValue): P[LenArg] = lenArg.filter(len => min <= len.len.value && len.len.value <= max)
-  val sqlType: P[SqlType] = (
+  val baseType: P[BaseType] = (
     /*
       PostgreSQL 12.5: quoted type names are not accepted.
       `CREATE TABLE Foo(a "smallint")` results in `ERROR:  type "smallint" does not exist`
@@ -167,6 +169,9 @@ class PostgreSqlParser:
 
     t("jsonb").map(_.toIdent).map(jsonb.apply)
   )
+  def arrayDim: P[ArrayDim] = (t("[") ~ intLit.? ~ t("]"))
+      .map(unnest).map(ArrayDim.apply)
+  def tpe: P[Type] = (baseType ~ arrayDim.rep0).map(Type.apply)
 
   // 4.1.3. Operators
   val op: P[Op] = {
@@ -202,9 +207,14 @@ class PostgreSqlParser:
     def binOpTokenFoldLeft(left: Expr, opRights: Seq[(Token, Expr)]): Expr =
         opRights.foldLeft(left)((left, opRight) => BinOp(left, Op(opRight._1), opRight._2))
 
+    val functionCall: P[FunctionCall] = (ident ~ (t("(") ~ expr.repTokenSep(",") ~ t(")")).map(unnest).map(Args.apply).?)
+        .map(FunctionCall.apply)
+
     val typeCast: P[Expr] =
-      (t("(") ~ expr ~ t(")")).map(unnest).map(ParenExpr(_, _, _)) | // https://github.com/typelevel/cats-parse says to use `tupled` but couldn't find the method in cats
-      lit
+      // TODO
+      (t("(") ~ expr ~ t(")")).map(unnest).map(ParenExpr(_, _, _)) |
+      lit |
+      functionCall
     val arrayAccess: P[Expr] = (typeCast ~ (t("[") ~ expr ~ t("]")).map(unnest).rep0) // TODO slice subscript
         .map((expr, subscripts) => subscripts.foldLeft(expr)((expr, subscript) => ArrayAccess(expr, subscript._1, subscript._2, subscript._3)))
     val unary: P[Expr] = (op.filter(_.body.isOneOf("+", "-")).backtrack.rep0.with1 ~ arrayAccess)
@@ -242,12 +252,10 @@ class PostgreSqlParser:
       nullability |
       default |
       references
-  def arrayDim: P[ArrayDim] = (t("[") ~ intLit.? ~ t("]"))
-      .map(unnest).map(ArrayDim.apply)
 
   // TODO validate that there are no more than one constraints of the same type (e.g. NULL NULL)
-  val column: P[Column] = (ident ~ sqlType ~ arrayDim.rep0 ~ columnConstraint.rep0)
-      .map(unnest).map(Column.apply).backtrack
+  val column: P[Column] = (ident ~ tpe ~ columnConstraint.rep0)
+      .map(unnest).map(Column(_, _, _)).backtrack
 
   val primaryKey = (t("PRIMARY") ~ t("KEY") ~ t("(") ~ ident.repTokenSep(",") ~ t(")"))
       .map(unnest).map(PrimaryKey(_, _, _, _, _))

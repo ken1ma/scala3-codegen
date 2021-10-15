@@ -141,8 +141,8 @@ class PostgreSqlParserSuite extends munit.FunSuite:
   }
 
   test("varchar") {
-    assertEquals(sqlType.parseAll("varchar"), Right(varchar(Seq(ident"varchar"))))
-    assertEquals(sqlType.parseAll("character VARYING(3)" ), Right(varchar(Seq(ident"character", ident" VARYING"), Some(LenArg(token"(", intLit"3", token")")))))
+    assertEquals(baseType.parseAll("varchar"), Right(varchar(Seq(ident"varchar"))))
+    assertEquals(baseType.parseAll("character VARYING(3)" ), Right(varchar(Seq(ident"character", ident" VARYING"), Some(LenArg(token"(", intLit"3", token")")))))
   }
 
   test("expr") {
@@ -185,5 +185,28 @@ class PostgreSqlParserSuite extends munit.FunSuite:
         Column(Ident(ws"  ", "score", true), numeric(ident" numeric", Some(NumericArgs(token"(", intLit"3", Some(NumericScale(token",", intLit" 2")), token")")))),
         PrimaryKey(token"  PRIMARY", token" KEY", token"(", SeqTokenSep(ident"id"), token")\n"),
       ), token",\n"), token")")
+    ))
+
+    assertEqualsLong(createTable.parseAll("""
+        |CREATE TABLE Dog(
+        |  id           INTEGER   NOT NULL,
+        |  name         TEXT      NOT NULL,
+        |  parentId     INTEGER   REFERENCES Dog, /* might be unknown */
+        |  lastModified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        |  PRIMARY KEY(id)
+        |)
+        """.stripMargin.trim), Right(
+      CreateTable(token"CREATE", token" TABLE", ident" Dog", token"(\n", SeqTokenSep(Seq(
+        Column(ident"  id", integer    (ident"           INTEGER"), Nullability(Some(token"   NOT"), token" NULL")),
+        Column(ident"  name", text          (ident"         TEXT"), Nullability(Some(token"      NOT"), token" NULL")),
+        Column(ident"  parentId", integer    (ident"     INTEGER"), References(token"   REFERENCES", ident" Dog")),
+        Column(ident"  lastModified", timestamp(ident" TIMESTAMP"), Nullability(Some(token" NOT"), token" NULL"), Default(token" DEFAULT", FunctionCall(ident" CURRENT_TIMESTAMP"))),
+        PrimaryKey(token"  PRIMARY", token" KEY", token"(", SeqTokenSep(ident"id"), token")\n"),
+      ), Seq(
+        token",\n",
+        token",\n",
+        Token(",", Seq(ws" ", BlockComment(" might be unknown "), ws"\n")),
+        token",\n",
+      )), token")")
     ))
   }

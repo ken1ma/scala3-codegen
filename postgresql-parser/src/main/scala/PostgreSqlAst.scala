@@ -47,7 +47,7 @@ object PostgreSqlAst:
       case None => columns
   trait CreateTableEntry
 
-  case class Column(ident: Ident, tpe: SqlType, arrayDims: Seq[ArrayDim] = Nil, constraints: Seq[ColumnConstraint] = Nil) extends CreateTableEntry:
+  case class Column(ident: Ident, tpe: Type, constraints: Seq[ColumnConstraint] = Nil) extends CreateTableEntry:
     def nullability: Option[Nullability] = constraints.collectFirst { case nullability: Nullability => nullability }
     def notNull: Boolean = nullability.exists(_.notNull)
     def default: Option[Default] = constraints.collectFirst { case default: Default => default }
@@ -57,7 +57,7 @@ object PostgreSqlAst:
     def notNull: Boolean = not.nonEmpty
     override def toString = s"${not.mkString}$nul"
   case class Default(default: Token, expr: Expr) extends ColumnConstraint
-  case class References(references: Token, table: Ident, dstColumn: Option[ReferencesColumn]) extends ColumnConstraint
+  case class References(references: Token, table: Ident, dstColumn: Option[ReferencesColumn] = None) extends ColumnConstraint
   case class ReferencesColumn(open: Token, column: Ident, close: Token)
 
   trait TableConstraint extends CreateTableEntry
@@ -71,33 +71,33 @@ object PostgreSqlAst:
 
   case class CreateIndex(create: Token, index: Token, ident: Ident, on: Token, table: Ident, open: Token, columns: SeqTokenSep[Ident], close: Token) extends Command
 
-  trait SqlType
-  /** INT2 */ case class smallint (ident: Ident) extends SqlType
-  /** INT4 */ case class integer  (ident: Ident) extends SqlType
-  /** INT8 */ case class bigint   (ident: Ident) extends SqlType
-  case class numeric  (ident: Ident, numericArgs: Option[NumericArgs] = None) extends SqlType
+  trait BaseType
+  /** INT2 */ case class smallint (ident: Ident) extends BaseType
+  /** INT4 */ case class integer  (ident: Ident) extends BaseType
+  /** INT8 */ case class bigint   (ident: Ident) extends BaseType
+  case class numeric  (ident: Ident, numericArgs: Option[NumericArgs] = None) extends BaseType
   case class NumericArgs(open: Token, precision: IntLit, scale: Option[NumericScale] = None, close: Token)
   case class NumericScale(comma: Token, scale: IntLit)
-  case class real     (ident: Ident) extends SqlType
-  case class double_precision(ident1: Ident, ident2: Ident) extends SqlType
+  case class real     (ident: Ident) extends BaseType
+  case class double_precision(ident1: Ident, ident2: Ident) extends BaseType
   // SMALLSERIAL
   // SERIAL
   // BIGSERIAL
   // MONEY
-  case class varchar  (idents: Seq[Ident], len: Option[LenArg] = None) extends SqlType
+  case class varchar  (idents: Seq[Ident], len: Option[LenArg] = None) extends BaseType
   case class LenArg(open: Token, len: IntLit, close: Token)
-  case class char     (ident: Ident, len: Option[LenArg]) extends SqlType
-  case class text     (ident: Ident) extends SqlType
-  case class bytea    (ident: Ident) extends SqlType
-  /** timestamp [without time zone] */ case class timestamp(idents: Seq[Ident], precision: Option[LenArg] = None) extends SqlType:
+  case class char     (ident: Ident, len: Option[LenArg]) extends BaseType
+  case class text     (ident: Ident) extends BaseType
+  case class bytea    (ident: Ident) extends BaseType
+  /** timestamp [without time zone] */ case class timestamp(idents: Seq[Ident], precision: Option[LenArg] = None) extends BaseType:
     override def toString = s"${idents.head}$precision${idents.tail}"
-  /** timestamp  with    time zone  */ case class timestamptz(idents: Seq[Ident], precision: Option[LenArg] = None) extends SqlType:
+  /** timestamp  with    time zone  */ case class timestamptz(idents: Seq[Ident], precision: Option[LenArg] = None) extends BaseType:
     override def toString = s"${idents.head}$precision${idents.tail}"
-  case class date     (ident: Ident) extends SqlType
-  /** time [without time zone] */ case class time(idents: Seq[Ident], precision: Option[LenArg] = None) extends SqlType
-  /** time  with    time zone  */ case class timetz(idents: Seq[Ident], precision: Option[LenArg] = None) extends SqlType
+  case class date     (ident: Ident) extends BaseType
+  /** time [without time zone] */ case class time(idents: Seq[Ident], precision: Option[LenArg] = None) extends BaseType
+  /** time  with    time zone  */ case class timetz(idents: Seq[Ident], precision: Option[LenArg] = None) extends BaseType
   // INTERVAL
-  case class boolean  (ident: Ident) extends SqlType
+  case class boolean  (ident: Ident) extends BaseType
   // ENUM / Composite Types / Domain Types
   // POINT, LINE, LSEG, BOX, PATH, POLYGON, CIRCLE
   // CIDR, INET, MACADDR, MACADDR8
@@ -106,20 +106,22 @@ object PostgreSqlAst:
   // UUID
   // XML
   // JSON
-  case class jsonb    (ident: Ident) extends SqlType
+  case class jsonb    (ident: Ident) extends BaseType
   /** Array dimension */ case class ArrayDim(open: Token, size: Option[IntLit], close: Token)
   // INT4RANGE, INT8RANGE, NUMRANGE, TSRANGE, TSTZRANGE, DATERANGE
   // OID
   // PG_LSN
   // Pseudo-Types
 
+  case class Type(base: BaseType, arrayDims: Seq[ArrayDim] = Nil)
+
   trait Expr
   case class ParenExpr(open: Token, expr: Expr, close: Token) extends Expr
 
   /** Literal */ trait Lit extends Expr
-  case class FunctionCall(ident: Ident, args: Option[CallArgs] = None) extends Lit:
+  case class FunctionCall(ident: Ident, args: Option[Args] = None) extends Lit:
     def isCurrentTimestamp = ident.body.equalsIgnoreCase("CURRENT_TIMESTAMP")
-  case class CallArgs(open: Token, args: SeqTokenSep[Expr], close: Token)
+  case class Args(open: Token, args: SeqTokenSep[Expr], close: Token)
 
   case class BooleanLit(pre: Seq[WhitespaceOrComment], body: String, suc: Seq[WhitespaceOrComment] = Nil) extends Lit:
     require(body.equalsIgnoreCase("FALSE") | body.equalsIgnoreCase("TRUE"), s"illegal body: $body")
@@ -158,6 +160,9 @@ object PostgreSqlAst:
     def apply(pre: Whitespace, body: String, quoted: Boolean): Ident = this(Seq(pre), body, quoted)
     def apply(pre: Whitespace, body: String): Ident = this(Seq(pre), body)
 
+  object timestamp:
+    def apply(ident: Ident): timestamp = this(Seq(ident))
+
   object BooleanLit:
     def apply(body: String, suc: Seq[WhitespaceOrComment]): BooleanLit = this(Nil, body, suc)
     def apply(body: String): BooleanLit = this(Nil, body)
@@ -189,6 +194,9 @@ object PostgreSqlAst:
         Nullability(Some(Token("NOT")), Token(Seq(Whitespace(" ")), "NULL"))
       else
         Nullability(None, Token("NULL"))
+
+  object Column:
+    def apply(ident: Ident, baseType: BaseType, constraints: ColumnConstraint*): Column = this(ident, Type(baseType), constraints.toSeq)
 
 object PostgreSqlAstOps:
   import PostgreSqlAst._
