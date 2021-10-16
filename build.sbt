@@ -1,4 +1,4 @@
-ThisBuild / scalaVersion := "3.1.0-RC2"
+ThisBuild / scalaVersion := "3.1.0-RC3"
 ThisBuild / scalacOptions := Seq(
   // default from https://scastie.scala-lang.org/
   "-deprecation",

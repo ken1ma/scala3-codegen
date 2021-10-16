@@ -27,7 +27,7 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
   val postgreSqlParser = PostgreSqlParser()
 
   override def run(using Context): Unit =
-    println(s"## ctx.compilationUnit = ${ctx.compilationUnit}")
+    //println(s"## ctx.compilationUnit = ${ctx.compilationUnit}")
 
     val transformer = new untpd.UntypedTreeMap():
       override def transform(tree: untpd.Tree)(using Context): untpd.Tree = tree match
@@ -62,7 +62,7 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
                   val gen = new SqlClassGen
                   val synthesizedParams = createTable.columns.toList.map { column =>
                     val valDef = gen.paramAccessorOf(column)
-                    println(s"valDef = $valDef")
+                    //println(s"valDef = $valDef")
                     valDef
                   }
                   val augumentedParams = synthesizedParams +: paramss.tail
@@ -81,6 +81,7 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
         case _ => super.transform(tree)
 
     ctx.compilationUnit.untpdTree = transformer.transform(ctx.compilationUnit.untpdTree)
+  end run
 
   object ClassWithSqlTable extends ClassWithAnnotation("jp.ken1ma.SqlClass.SqlTable")
 
