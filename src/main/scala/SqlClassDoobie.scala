@@ -17,22 +17,23 @@ import CpsHelper.given
 object SqlClassDoobie:
   @SqlTable("""
     CREATE TABLE Dog(
-      id           SERIAL    NOT NULL,
+      id           INTEGER   NOT NULL,
       name         TEXT      NOT NULL,
       parentId     INTEGER   REFERENCES Dog, /* might be unknown */
-      lastModified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      lastModified TIMESTAMP NOT NULL DEFAULT current_timestamp,
       PRIMARY KEY(id)
     )
   """)
   case class Dog()
 
-  val dog1 = Dog(1)
-  val dog2 = Dog(2)
-  val dog3 = Dog(3)
+  val dog1 = Dog(1, "dog1")
+  val dog2 = Dog(2, "dog2")
+  val dog3 = Dog(3, "dog3")
 
-
+/*
   @jp.ken1ma.SqlClass.SqlTable("""
     CREATE TABLE Cat(
     )
   """)
   case class Cat(id: Int)
+*/

@@ -187,12 +187,12 @@ class PostgreSqlParserSuite extends munit.FunSuite:
       ), token",\n"), token")")
     ))
 
-    assertEqualsLong(createTable.parseAll("""
+    assertEquals(createTable.parseAll("""
         |CREATE TABLE Dog(
         |  id           INTEGER   NOT NULL,
         |  name         TEXT      NOT NULL,
         |  parentId     INTEGER   REFERENCES Dog, /* might be unknown */
-        |  lastModified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        |  lastModified TIMESTAMP NOT NULL DEFAULT current_timestamp,
         |  PRIMARY KEY(id)
         |)
         """.stripMargin.trim), Right(
@@ -200,7 +200,7 @@ class PostgreSqlParserSuite extends munit.FunSuite:
         Column(ident"  id", integer    (ident"           INTEGER"), Nullability(Some(token"   NOT"), token" NULL")),
         Column(ident"  name", text          (ident"         TEXT"), Nullability(Some(token"      NOT"), token" NULL")),
         Column(ident"  parentId", integer    (ident"     INTEGER"), References(token"   REFERENCES", ident" Dog")),
-        Column(ident"  lastModified", timestamp(ident" TIMESTAMP"), Nullability(Some(token" NOT"), token" NULL"), Default(token" DEFAULT", FunctionCall(ident" CURRENT_TIMESTAMP"))),
+        Column(ident"  lastModified", timestamp(ident" TIMESTAMP"), Nullability(Some(token" NOT"), token" NULL"), Default(token" DEFAULT", FunctionCall(ident" current_timestamp"))),
         PrimaryKey(token"  PRIMARY", token" KEY", token"(", SeqTokenSep(ident"id"), token")\n"),
       ), Seq(
         token",\n",

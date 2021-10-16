@@ -147,7 +147,7 @@ class PostgreSqlParser:
     t("real").map(_.toIdent).map(real.apply) |
     (t("double") ~ t("precision"))
         .map(t => (t._1.toIdent, t._2.toIdent))
-        .map(double_precision.apply) |
+        .map(double.apply) |
 
     (((t("varchar").map(Seq(_)) | (t("character") ~ t("varying")).backtrack.map(_.toList)).map(_.map(_.toIdent))) ~ lenArg(0).?).map(varchar.apply) |
     (((t("char") | t("character")).map(_.toIdent)) ~ lenArg.?).map(char.apply) |
@@ -269,7 +269,15 @@ class PostgreSqlParser:
       unique |
       foreignKey
 
-  def createTable: P[CreateTable] = {
+  val createTable: P[CreateTable] = {
     val entry = column | tableConstraint
     (t("CREATE") ~ t("TABLE") ~ ident ~ t("(") ~ entry.repTokenSep(",") ~ t(")")).map(unnest).map(CreateTable.apply)
   }
+
+  val command: P[Command] =
+      createTable
+      // createIndex
+
+  val commands: P0[Commands] =
+      (command.? ~ (t(";") ~ command.?).rep0 ~ pre)
+      .map(unnest).map((head, tail, suc) => Commands(SeqTokenSep(head +: tail.map(_._2), tail.map(_._1)), suc))

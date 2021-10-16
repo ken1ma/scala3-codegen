@@ -19,7 +19,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "scala3-codegen",
     scalacOptions ++= Seq(
-      s"-Xplugin:${(plugin / Compile / packageBin).value.getAbsolutePath}",
+      s"-Xplugin:${(plugin / Compile / assembly).value.getAbsolutePath}",
       s"-P:SqlClass:lastModified=${(plugin / Compile / packageBin).value.lastModified}", // recompile when the plugin changes
     ),
     libraryDependencies ++= Seq(
@@ -38,8 +38,9 @@ lazy val plugin = (project in file("sql-class/plugin"))
   .settings(
     name := "sql-class-plugin",
     libraryDependencies ++= Seq(
-      "org.scala-lang" %% "scala3-compiler" % scalaVersion.value,
+      "org.scala-lang" %% "scala3-compiler" % scalaVersion.value % Provided,
     ),
+    assemblyPackageScala / assembleArtifact := false, // exclude Scala library JARs
   )
   .dependsOn(`postgresql-parser`)
 

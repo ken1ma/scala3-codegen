@@ -34,6 +34,7 @@ object PostgreSqlAst:
 
   case class Commands(commands: SeqTokenSep[Option[Command]], suc: Seq[WhitespaceOrComment] = Nil):
     def nonEmptyCommands: Seq[Command] = commands.elems.flatten
+    override def toString = s"$commands${suc.mkString}"
   trait Command
 
   case class CreateTable(create: Token, table: Token, ident: Ident, open: Token, entries: SeqTokenSep[CreateTableEntry], close: Token) extends Command:
@@ -79,7 +80,7 @@ object PostgreSqlAst:
   case class NumericArgs(open: Token, precision: IntLit, scale: Option[NumericScale] = None, close: Token)
   case class NumericScale(comma: Token, scale: IntLit)
   case class real     (ident: Ident) extends BaseType
-  case class double_precision(ident1: Ident, ident2: Ident) extends BaseType
+  case class double   (ident1: Ident, ident2: Ident) extends BaseType
   // SMALLSERIAL
   // SERIAL
   // BIGSERIAL
