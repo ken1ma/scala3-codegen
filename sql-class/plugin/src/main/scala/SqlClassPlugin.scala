@@ -31,7 +31,7 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
 
     val transformer = new untpd.UntypedTreeMap():
       override def transform(tree: untpd.Tree)(using Context): untpd.Tree = tree match
-        case ClassWithSqlTable(typeDef @ untpd.TypeDef(name, rhs), args) =>
+        case ClassWithSqlTable(typeDef @ untpd.TypeDef(name, typeRhs), args) =>
           if (!typeDef.mods.is(Flags.CaseClass))
             throw new Exception(s"@SqlTable must annotate a case class")
           //println(s"args = $args")
@@ -50,11 +50,11 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
           }.getOrElse(throw new Exception(s"no CREATE TABLE")) // TODO
           //println(s"createTable = $createTable")
 
-          rhs match
+          typeRhs match
             case template @ untpd.Template(constr, parentsOrDerived, self, preBody) =>
               import dotty.tools.dotc.core.StdNames
               constr match
-                case untpd.DefDef(StdNames.nme.CONSTRUCTOR, paramss, tpt, rhs2) =>
+                case untpd.DefDef(StdNames.nme.CONSTRUCTOR, paramss, tpt, defRhs) =>
                   val params = paramss.head // case class must have at least one parameter list
                   if (params.nonEmpty)
                     report.error(s"case class with @SqlTable must have empty parameter list", constr)
@@ -67,13 +67,10 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
                   }
                   val augumentedParams = synthesizedParams +: paramss.tail
 
-                  // Since TypeDef.copy cannot be accessed due to TypeDef being private[ast]
-                  // TypeDef is constructed and modifiers are set
-                  val parents = parentsOrDerived // TODO
-                  val derived = Nil
-                  val augmentedTypeDef = untpd.TypeDef(name, untpd.Template(untpd.DefDef(StdNames.nme.CONSTRUCTOR, augumentedParams, tpt, rhs2), parents, derived, self, preBody))
-                      .withMods(typeDef.mods)
-                  //println(s"augmentedTypeDef = $augmentedTypeDef")
+                  val augumentedConstr = untpd.cpy.DefDef(constr)(paramss = augumentedParams)
+                  val augumentedTemplate = untpd.cpy.Template(template)(constr = augumentedConstr)
+                  val augmentedTypeDef = untpd.cpy.TypeDef(typeDef)(rhs = augumentedTemplate)
+                  //println(s"augmentedTypeDef.show = ${augmentedTypeDef.show}")
                   augmentedTypeDef
 
                 case _ => super.transform(tree)
@@ -84,15 +81,3 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
   end run
 
   object ClassWithSqlTable extends CaseClassWithAnnotation("jp.ken1ma.SqlClass.SqlTable")
-
-/*
-  def show(tree: untpd.Tree)(using Context): String = tree match
-    case untpd.Select(qualifier, name) => s"Select(${show(qualifier)}, ${show(name)})"
-    case valDef @ untpd.ValDef(name, tpt, _) => s"ValDef(${show(name)}, ${show(tpt)}, ${show(valDef.rhs)})"
-    case _ => tree.toString
-
-  def show(name: dotty.tools.dotc.core.Names.Name)(using Context): String =
-    if      name.isTermName then s"termName($name)"
-    else if name.isTypeName then s"typeName($name)"
-    else    s"name($name)"
-*/
