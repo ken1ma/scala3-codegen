@@ -83,7 +83,7 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
     ctx.compilationUnit.untpdTree = transformer.transform(ctx.compilationUnit.untpdTree)
   end run
 
-  object ClassWithSqlTable extends ClassWithAnnotation("jp.ken1ma.SqlClass.SqlTable")
+  object ClassWithSqlTable extends CaseClassWithAnnotation("jp.ken1ma.SqlClass.SqlTable")
 
 /*
   def show(tree: untpd.Tree)(using Context): String = tree match

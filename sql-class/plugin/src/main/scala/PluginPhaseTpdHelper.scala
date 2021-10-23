@@ -9,7 +9,6 @@ import dotty.tools.dotc.plugins.PluginPhase
 trait PluginPhaseTpdHelper { this: PluginPhase =>
 /*
   // transformTypeDef has been discovered in https://github.com/lampepfl/dotty/blob/master/compiler/src/dotty/tools/dotc/transform/MegaPhase.scala
-  // TypeDef is defined at // https://github.com/lampepfl/dotty/blob/3.0.2/compiler/src/dotty/tools/dotc/ast/Trees.scala#L856
 
   override def transformTypeDef(typeDef: TypeDef)(implicit ctx: Context): TypeDef =
     //println(s"#### typeDef = $typeDef")
