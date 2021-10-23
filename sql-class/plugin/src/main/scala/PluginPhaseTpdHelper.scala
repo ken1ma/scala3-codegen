@@ -2,7 +2,7 @@ package jp.ken1ma.SqlClass
 
 import dotty.tools.dotc.ast.tpd._
 import dotty.tools.dotc.core.Contexts.Context
-import dotty.tools.dotc.core.Flags.CaseClass
+import dotty.tools.dotc.core.Flags, Flags.CaseClass
 import dotty.tools.dotc.core.StdNames
 import dotty.tools.dotc.plugins.PluginPhase
 

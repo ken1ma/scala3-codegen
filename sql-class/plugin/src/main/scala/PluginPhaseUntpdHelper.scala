@@ -2,7 +2,7 @@ package jp.ken1ma.SqlClass
 
 import dotty.tools.dotc.ast.untpd._
 import dotty.tools.dotc.core.Contexts.Context
-import dotty.tools.dotc.core.Flags.CaseClass
+import dotty.tools.dotc.core.Flags, Flags.CaseClass
 import dotty.tools.dotc.core.StdNames
 import dotty.tools.dotc.core.Types.Type
 import dotty.tools.dotc.plugins.PluginPhase
@@ -15,18 +15,34 @@ trait PluginPhaseUntpdHelper { this: PluginPhase =>
         val annotationArgss = typeDef.mods.annotations.flatMap(_ match
           case Apply(Select(New(tpt), StdNames.nme.CONSTRUCTOR), args) =>
             /*
-              name.denot.info.classSymbol.fullName.toString returns the fully qualified name after typer
-              TODO: somehow resolve the fullName
-              tpt.denot = val <none>
-              tpt.denot.info = NoType
-              ctx.typer.findRef(name, defn.AnyType, EmptyFlags, EmptyFlags, tree.srcPos) returns NoType for both Ident(name) and Select(qualifier, name)
-                same with Types.WildcardType
-              ctx.typer.symbolOfTree(name) throws IllegalArgumentException: SqlTable does not have a symbol
-              the followings print out [error] Not found: type SqlTable
-                ctx.typer.typedAnnotation(annotTree) 
-                ctx.typer.typed(tpt)
-                ctx.typer.typedUnadapted(tpt)
+              we want a symbol that identifies the annotation definition that namer computes
+              however we want to run before typer since we are generating class members
+
+              but it seems namer and typer remains as a single phase
+              https://github.com/lampepfl/dotty/pull/13762 
+
+              and there seems to be no typer plugins mentioned in
+              https://github.com/lampepfl/dotty/pull/3438
+
+              I don't think we can resolve imports or type aliases
             */
+
+            //println(s"tpt = $tpt") // prints "Ident(SqlTable)"
+            //println(s"tpt.denot = ${tpt.denot}") // prints "val <none>"
+            //println(s"tpt.denot.info = ${tpt.denot.info}") // prints "NoType"
+            //denot.info.classSymbol.fullName.toString returns the fully qualified name after typer
+            /*
+            tpt match
+              case Ident(name) =>
+                //println(s"  name = $name") // prints "SqlTable"
+                //println(s"  findRef = ${ctx.typer.findRef(name, ctx.definitions.AnyType, Flags.EmptyFlags, Flags.EmptyFlags, tpt.srcPos)}") // prints "NoType"
+                //ctx.typer.symbolOfTree(tpt) throws IllegalArgumentException: SqlTable does not have a symbol
+                //ctx.typer.typedAnnotation(annotTree) prints "Not found: type SqlTable"
+                //ctx.typer.typed(tpt)                 prints "Not found: type SqlTable"
+                //ctx.typer.typedUnadapted(tpt)        prints "Not found: type SqlTable"
+              case _ =>
+            */
+
             // compare the last name as a last resort (doesn't work when renamed while importing)
             val nameLast = annotationName.lastIndexOf('.') match
               case -1 => annotationName
@@ -34,9 +50,9 @@ trait PluginPhaseUntpdHelper { this: PluginPhase =>
             val nameMatched = tpt match
               case Ident(name)             => name.toString == nameLast
               case Select(qualifier, name) => name.toString == nameLast
-            Option.when(nameMatched)(args.map(_.asInstanceOf[Tree])) // avoid type error, can we avoid the cast?
+            Option.when(nameMatched)(args)
 
-          case annot => None
+          case _ => None
         )
 
         annotationArgss.size match
