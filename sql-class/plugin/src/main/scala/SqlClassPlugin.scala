@@ -31,20 +31,24 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
 
     val transformer = new untpd.UntypedTreeMap():
       override def transform(tree: untpd.Tree)(using Context): untpd.Tree = tree match
+        // class with the annotation
         case ClassWithSqlTable(typeDef @ untpd.TypeDef(name, typeRhs), args) =>
           if (!typeDef.mods.is(Flags.CaseClass))
             throw new Exception(s"@SqlTable must annotate a case class")
           //println(s"args = $args")
 
+          // extract the annotation parameters
           val sqlParam = args.head match
             case Literal(constant) => constant.stringValue
           //println(s"sqlParam = $sqlParam")
 
+          // parse the sql
           val commands = postgreSqlParser.commands.parseAll(sqlParam) match
             case Right(ast) => ast
             case Left(err) => throw new Exception(CatsParseHelper.ErrorPrettyPrint(sqlParam, ctx.compilationUnit.toString).prettyPrint(err)) // TODO
           //println(s"commands = $commands")
 
+          // extract CREATE TABLE
           val createTable = commands.nonEmptyCommands.collectFirst { _ match
             case createTable: sql.CreateTable => createTable
           }.getOrElse(throw new Exception(s"no CREATE TABLE")) // TODO
@@ -59,18 +63,21 @@ class SqlClassPluginPhase extends PluginPhase with PluginPhaseUntpdHelper:
                   if (params.nonEmpty)
                     report.error(s"case class with @SqlTable must have empty parameter list", constr)
 
+                  // generate parameters
                   val gen = new SqlClassGen
-                  val synthesizedParams = createTable.columns.toList.map { column =>
+                  val generatedParams = createTable.columns.toList.map { column =>
                     val valDef = gen.paramAccessorOf(column)
-                    //println(s"valDef = $valDef")
+                    //println(s"valDef = ${valDef.show}")
                     valDef
                   }
-                  val augumentedParams = synthesizedParams +: paramss.tail
+                  val augmentedParams = generatedParams +: paramss.tail
 
-                  val augumentedConstr = untpd.cpy.DefDef(constr)(paramss = augumentedParams)
-                  val augumentedTemplate = untpd.cpy.Template(template)(constr = augumentedConstr)
-                  val augmentedTypeDef = untpd.cpy.TypeDef(typeDef)(rhs = augumentedTemplate)
-                  //println(s"augmentedTypeDef.show = ${augmentedTypeDef.show}")
+                  // replace constructor parameters, using TreeMap.cpy
+                  val augmentedConstr = cpy.DefDef(constr)(paramss = augmentedParams)
+                  val augmentedTemplate = cpy.Template(template)(constr = augmentedConstr)
+                  val augmentedTypeDef = cpy.TypeDef(typeDef)(rhs = augmentedTemplate)
+
+                  //println(s"augmentedTypeDef = ${augmentedTypeDef.show}")
                   augmentedTypeDef
 
                 case _ => super.transform(tree)
